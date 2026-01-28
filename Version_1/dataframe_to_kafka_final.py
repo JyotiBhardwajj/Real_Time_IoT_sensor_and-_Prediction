@@ -118,3 +118,84 @@ class DataFrameToKafka:
                                              key=str(index).encode(), 
                                              value=row[-1].encode())
                         else:
+                            self.producer.send(self.topic,
+                                             key=str(row[self.key_index]).encode(),
+                                             value=row[-1].encode())
+                        
+                        self.producer.flush()
+                        time.sleep(self.row_sleep_time)
+                        
+                        counter += 1
+                        pbar.update(1)
+                        
+                    except Exception as e:
+                        log_message(f"Data sending error: {str(e)}", "error")
+                        continue
+                        
+            if counter >= df_size:
+                break
+        
+        duration = time.time() - start_time
+        log_message("\n📊 Process Summary", "success")
+        print(f"{Fore.CYAN}├── ✅ Total records sent: {counter:,}")
+        print(f"├── ⏱️ Total time: {duration/60:.2f} minutes")
+        print(f"└── 📈 Average speed: {counter/duration:.2f} records/second{Style.RESET_ALL}")
+        
+        self.producer.close()
+        log_message("Producer closed.", "success")
+
+if __name__ == "__main__":
+    def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
+    print_banner()
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-i", "--input", required=False, type=str, default="/tmp/sensors.csv",
+                    help="Source data path. Default: /tmp/sensors.csv") 
+    ap.add_argument("-s", "--sep", required=False, type=str, default=",",
+                    help="Source data file delimiter. Default: ,")
+    ap.add_argument("-e", "--source_file_extension", required=False, type=str, default="csv",
+                    help="Extension of data file. Default: csv")
+    ap.add_argument("-ks", "--kafka_sep", required=False, type=str, default=",",
+                    help="Kafka value separator. Default: ,")
+    ap.add_argument("-rst", "--row_sleep_time", required=False, type=float, default=0.5,
+                    help="Sleep time in seconds per row. Default: 0.5")
+    ap.add_argument("-t", "--topic", required=False, type=str, default="office-input",
+                    help="Kafka topic. Default: office-input")
+    ap.add_argument("-b", "--bootstrap_servers", required=False, nargs='+', default=["localhost:9092"],
+                    help="Kafka bootstrap servers. Default: [localhost:9092]")
+    ap.add_argument("-r", "--repeat", required=False, type=int, default=1,
+                    help="How many times to repeat dataset. Default: 1")
+    ap.add_argument("-shf", "--shuffle", required=False, type=str2bool, default=False,
+                    help="Shuffle the rows?. Default: False")
+    ap.add_argument("-k", "--key_index", required=False, type=int, default=1000,
+                    help="Column index for Kafka key. Default: 1000 (uses pandas index)")
+    ap.add_argument("-exc", "--excluded_cols", required=False, nargs='+', default=['it_is_impossible_column'],
+                    help="Columns to exclude. Default: ['it_is_impossible_column']")
+
+    args = vars(ap.parse_args())
+
+    df_to_kafka = DataFrameToKafka(
+        input=args['input'],
+        sep=args['sep'],
+        kafka_sep=args['kafka_sep'],
+        row_sleep_time=args['row_sleep_time'],
+        source_file_extension=args['source_file_extension'],
+        topic=args['topic'],
+        bootstrap_servers=args['bootstrap_servers'],
+        repeat=args['repeat'],
+        shuffle=args['shuffle'],
+        key_index=args['key_index'],
+        excluded_cols=args['excluded_cols']
+    )
+    
+    df_to_kafka.df_to_kafka()
+# refactor: optimize batch ingestion size in kafka streaming
