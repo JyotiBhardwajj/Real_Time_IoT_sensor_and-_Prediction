@@ -54,3 +54,82 @@ def log_message(message, level="info", indent=0):
        "success": Fore.CYAN
    }
    icons = {
+       "info": "ℹ️",
+       "warning": "⚠️",
+       "error": "❌",
+       "highlight": "🔍",
+       "success": "✅"
+   }
+   indent_str = "  " * indent
+   print(f"{colors.get(level, Fore.WHITE)}[{timestamp}] {icons.get(level, '')} {indent_str}{message}{Style.RESET_ALL}")
+
+print_banner()
+log_message("🚀 Starting ML Stream process...", "highlight")
+
+# Initialize Spark Session
+try:
+   spark = (SparkSession.builder
+            .appName("ML Stream Processing")
+            .master("local[2]")
+            .config("spark.driver.memory", "4g")
+            .config("spark.executor.memory", "4g")
+            .config("spark.sql.shuffle.partitions", "10")
+            .config("spark.default.parallelism", "10")
+            .config("spark.network.timeout", "800s")
+            .config("spark.executor.heartbeatInterval", "60s")
+            .config("spark.storage.blockManagerSlaveTimeoutMs", "800s")
+            .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1")
+            .getOrCreate())
+   
+   spark.sparkContext.setLogLevel("ERROR")
+   log_message("✅ Spark Session created successfully!", "success")
+except Exception as e:
+   log_message(f"❌ Spark Session error: {str(e)}", "error")
+   sys.exit(1)
+
+# Read from Kafka
+try:
+   df = spark \
+       .readStream \
+       .format("kafka") \
+       .option("kafka.bootstrap.servers", "kafka:9092") \
+       .option("subscribe", "office-input") \
+       .option("startingOffsets", "latest") \
+       .load()
+   log_message("✅ Kafka connection successful!", "success")
+except Exception as e:
+   log_message(f"❌ Kafka connection error: {str(e)}", "error")
+   sys.exit(1)
+
+# Data transformations
+log_message("🔄 Starting data transformations...")
+
+df2 = df.selectExpr("CAST(value AS STRING)")
+df3 = df2.withColumn("timestamp", F.split(F.col("value"), ",")[0]) \
+   .withColumn("ts_min_bignt", F.split(F.col("value"), ",")[1].cast(IntegerType())) \
+   .withColumn("room", F.split(F.col("value"), ",")[2]) \
+   .withColumn("co2", F.split(F.col("value"), ",")[3].cast(FloatType())) \
+   .withColumn("light", F.split(F.col("value"), ",")[4].cast(FloatType())) \
+   .withColumn("temp", F.split(F.col("value"), ",")[5].cast(FloatType())) \
+   .withColumn("humidity", F.split(F.col("value"), ",")[6].cast(FloatType())) \
+   .withColumn("pir", F.split(F.col("value"), ",")[7].cast(FloatType()))
+
+# Create feature vector
+assembler = VectorAssembler(
+   inputCols=["co2", "light", "temp", "humidity"],
+   outputCol="features"
+)
+vectorized_df = assembler.transform(df3)
+
+# Load ML model
+try:
+   model = LogisticRegressionModel.load("/opt/spark/ml_model")
+   log_message("✅ Model loaded successfully!", "success")
+except Exception as e:
+   log_message(f"❌ Model loading error: {str(e)}", "error")
+   sys.exit(1)
+
+# Make predictions
+predictions = model.transform(vectorized_df)
+
+def process_batch(batch_df, batch_id):
