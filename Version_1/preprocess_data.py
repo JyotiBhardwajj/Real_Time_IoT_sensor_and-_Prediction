@@ -133,3 +133,94 @@ log_message(f"└── Source Directory: {directory_path}", "info", indent=1)
 # Get total folder count
 total_folders = len([f for f in os.listdir(directory_path)])
 log_message(f"📊 Total Folders to Process: {total_folders}", "highlight")
+
+# Process each folder
+for folder_idx, folder_name in enumerate(sorted(os.listdir(directory_path)), 1):
+   folder_start_time = time.time()
+   
+   log_message(f"\n{'='*50}", "highlight")
+   log_message(f"📁 Processing Folder [{folder_idx}/{total_folders}]: {folder_name}", "processing")
+   
+   folder_path = os.path.join(directory_path, folder_name)
+   sensor_files = ['co2.csv', 'humidity.csv', 'light.csv', 'pir.csv', 'temperature.csv']
+   
+   for i, file_name in enumerate(tqdm(sensor_files, 
+                                    desc=f"{Fore.CYAN}💾 Sensor Files{Style.RESET_ALL}",
+                                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")):
+       file_path = os.path.join(folder_path, file_name)
+       if not os.path.exists(file_path):
+           continue
+           
+       df_key = f"{folder_name}_{file_name.split('.')[0]}"
+       room_data[df_key] = spark_session.read \
+           .option("delimiter", ",") \
+           .schema(schema) \
+           .csv(file_path)
+       
+       room_data[df_key] = room_data[df_key] \
+           .withColumn("ts_min_bignt", F.trim(F.col("ts_min_bignt"))) \
+           .withColumn("sensor_value", F.trim(F.col("sensor_value"))) \
+           .withColumnRenamed("sensor_value", sensor_columns[i])
+       
+       room_data[df_key].createOrReplaceTempView(f"df_{file_name.split('.')[0]}")
+
+   # SQL joins
+   query = f"""
+   SELECT
+      FROM_UNIXTIME(CAST(df_co2.ts_min_bignt AS BIGINT), 'yyyy-MM-dd HH:mm:ss') as event_ts_min,
+      CAST(df_co2.ts_min_bignt AS BIGINT) as ts_min_bignt,
+      '{folder_name}' as room,
+      ROUND(CAST(df_co2.co2 AS DOUBLE), 6) as co2,
+      ROUND(CAST(df_light.light AS DOUBLE), 6) as light,
+      ROUND(CAST(df_temperature.temperature AS DOUBLE), 6) as temp,
+      ROUND(CAST(df_humidity.humidity AS DOUBLE), 6) as humidity,
+      ROUND(CAST(df_pir.pir AS DOUBLE), 6) as pir
+   FROM
+      df_co2
+      INNER JOIN df_humidity ON df_co2.ts_min_bignt = df_humidity.ts_min_bignt
+      INNER JOIN df_light ON df_humidity.ts_min_bignt = df_light.ts_min_bignt
+      INNER JOIN df_pir ON df_light.ts_min_bignt = df_pir.ts_min_bignt
+      INNER JOIN df_temperature ON df_pir.ts_min_bignt = df_temperature.ts_min_bignt
+   """
+   
+   dataframes_per_room[folder_name] = spark_session.sql(query)
+
+# Merge all data
+log_message("\n🔄 Merging data from all rooms...", "processing")
+df_merged = reduce(DataFrame.unionAll, dataframes_per_room.values()).dropna()
+df_merged = df_merged.cache()
+
+# Write to CSV
+output_path = "/opt/data-generator/input/sensors.csv"
+log_message(f"\n💾 Writing data to CSV: {output_path}", "processing")
+
+df_merged.coalesce(1).write \
+   .mode("overwrite") \
+   .option("header", "true") \
+   .option("delimiter", ",") \
+   .csv("/tmp/output_dir")
+
+subprocess.run(f"cat /tmp/output_dir/part-* > {output_path}", shell=True)
+
+# Final output and statistics
+log_message("\n📊 Sample Data:", "highlight")
+print("\n" + format_table_output(df_merged) + "\n")
+
+duration = time.time() - start_time
+total_rows = df_merged.count()
+
+print(f"""
+{Fore.CYAN}╔═════════════════════════════════════════════════════╗
+║                  PROCESS RESULTS                       ║
+╚═════════════════════════════════════════════════════════╝{Style.RESET_ALL}
+""")
+
+log_message(f"""
+✨ Process Completed Successfully!
+├── ⏱️ Total Processing Time: {duration / 60:.2f} minutes
+├── 📊 Total Row Count: {total_rows:,}
+└── 💾 Output File: {output_path}
+""", "success")
+
+spark_session.stop()
+# refactor: optimize feature engineering pipeline functions
