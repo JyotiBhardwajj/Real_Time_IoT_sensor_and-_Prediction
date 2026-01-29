@@ -133,3 +133,93 @@ except Exception as e:
 predictions = model.transform(vectorized_df)
 
 def process_batch(batch_df, batch_id):
+   """Process each batch and write to Kafka"""
+   start_time = time.time()
+   try:
+       # Adjust timestamp
+       batch_df = batch_df.withColumn(
+           "event_ts_min", 
+           F.from_unixtime(F.col("ts_min_bignt")).cast("timestamp")
+       )
+       
+       # Get probability value from vector
+       batch_df = batch_df.withColumn(
+           "confidence",
+           F.udf(lambda x: float(x[1]), FloatType())(F.col("probability"))
+       )
+       
+       # Remove unnecessary columns
+       columns_to_drop = ["probability", "features", "rawPrediction", "value"]
+       batch_df = batch_df.drop(*columns_to_drop)
+       
+       # Split movement and no-movement data
+       movement_df = batch_df.filter(F.col("prediction") == 1.0)
+       no_movement_df = batch_df.filter(F.col("prediction") == 0.0)
+       
+       # Columns to send
+       COLUMNS_TO_SEND = [
+           "event_ts_min", 
+           "room",
+           "co2", 
+           "light", 
+           "temp", 
+           "humidity",
+           "prediction",
+           "confidence"
+       ]
+       
+       # Send movement data
+       movement_count = 0
+       if movement_df.count() > 0:
+           movement_count = movement_df.count()
+           (movement_df
+            .select(COLUMNS_TO_SEND)
+            .select(F.to_json(F.struct(*COLUMNS_TO_SEND)).alias("value"))
+            .write
+            .format("kafka")
+            .option("kafka.bootstrap.servers", "kafka:9092")
+            .option("topic", "office-activity")
+            .save())
+       
+       # Send no-movement data
+       no_movement_count = 0
+       if no_movement_df.count() > 0:
+           no_movement_count = no_movement_df.count()
+           (no_movement_df
+            .select(COLUMNS_TO_SEND)
+            .select(F.to_json(F.struct(*COLUMNS_TO_SEND)).alias("value"))
+            .write
+            .format("kafka")
+            .option("kafka.bootstrap.servers", "kafka:9092")
+            .option("topic", "office-no-activity")
+            .save())
+       
+       # Show batch statistics
+       duration = time.time() - start_time
+       print_batch_stats(batch_id, movement_count, no_movement_count, duration)
+       
+   except Exception as e:
+       log_message(f"❌ Batch processing error: {str(e)}", "error")
+       raise e
+
+# Start streaming process
+try:
+   query = (predictions.writeStream
+            .foreachBatch(process_batch)
+            .option("checkpointLocation", "/tmp/kafka_ml_checkpoint")
+            .trigger(processingTime='10 seconds')
+            .start())
+   
+   log_message("""
+   ✨ Stream started successfully!
+   ├── 📥 Input: Kafka (office-input)
+   ├── 🤖 Model: Logistic Regression
+   ├── 📤 Output 1: Kafka (office-activity)
+   └── 📤 Output 2: Kafka (office-no-activity)
+   """, "success")
+   
+   query.awaitTermination()
+   
+except Exception as e:
+   log_message(f"❌ Stream startup error: {str(e)}", "error")
+   sys.exit(1)
