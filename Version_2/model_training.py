@@ -100,3 +100,71 @@ def main():
        StructField("ts_min_bignt", IntegerType(), True),
        StructField("room", StringType(), True),
        StructField("co2", FloatType(), True),
+       StructField("light", FloatType(), True),
+       StructField("temp", FloatType(), True),
+       StructField("humidity", FloatType(), True),
+       StructField("pir", FloatType(), True)
+   ])
+
+   try:
+       log_message("Reading training data...", "info")
+       df = spark.read.csv("/opt/data-generator/input/sensors.csv", 
+                          schema=schema, header=True)
+       total_records = df.count()
+       log_message(f"Read {total_records:,} records", "success", indent=1)
+   except Exception as e:
+       log_message(f"Data reading error: {str(e)}", "error")
+       sys.exit(1)
+
+   log_message("Starting data preprocessing...", "info")
+   with tqdm(total=3, desc=f"{Fore.CYAN}Data Preparation{Style.RESET_ALL}", 
+             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
+       
+       df = df.withColumn("label", F.when(F.col("pir") > 0, 1.0).otherwise(0.0))
+       pbar.update(1)
+       
+       assembler = VectorAssembler(
+           inputCols=["co2", "light", "temp", "humidity"],
+           outputCol="features"
+       )
+       pbar.update(1)
+       
+       training_data = assembler.transform(df)
+       pbar.update(1)
+
+   log_message("Starting model training...", "highlight")
+   try:
+       lr = LogisticRegression(
+           featuresCol="features",
+           labelCol="label",
+           maxIter=10
+       )
+       
+       with tqdm(total=100, desc=f"{Fore.CYAN}Model Training{Style.RESET_ALL}", 
+                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
+           model = lr.fit(training_data)
+           pbar.update(100)
+       
+       model.write().overwrite().save(model_path)
+       log_message("Model saved successfully!", "success")
+   except Exception as e:
+       log_message(f"Model training error: {str(e)}", "error")
+       sys.exit(1)
+
+   log_message("Evaluating model performance...", "info")
+   predictions = model.transform(training_data)
+   total = predictions.count()
+   correct = predictions.filter(F.col("prediction") == F.col("label")).count()
+   accuracy = (correct / total) * 100
+
+   print_performance_report(total, correct, accuracy)
+
+   log_message("""
+   ✨ Model training completed successfully!
+   ├── 💾 Model Location: /opt/spark/ml_model
+   └── 📊 Accuracy: {:.2f}%
+   """.format(accuracy), "success")
+
+if __name__ == "__main__":
+   main()
+# feat: integrate model checkpointing during evaluation
