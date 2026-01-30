@@ -224,3 +224,5 @@ log_message(f"""
 
 spark_session.stop()
 # refactor: optimize feature engineering pipeline functions
+
+# refactor: optimize feature engineering pipeline functions
