@@ -199,3 +199,5 @@ if __name__ == "__main__":
     
     df_to_kafka.df_to_kafka()
 # refactor: optimize batch ingestion size in kafka streaming
+
+# refactor: optimize batch ingestion size in kafka streaming
