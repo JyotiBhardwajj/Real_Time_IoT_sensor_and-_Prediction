@@ -39,3 +39,31 @@ try:
    
    log_message("Kafka stream started successfully! Waiting 5 seconds...")
    time.sleep(5)  # Monitor stream for 5 seconds
+   query.stop()
+   log_message("Kafka stream stopped.")
+   
+except Exception as e:
+   log_message(f"Kafka connection error: {e}")
+
+# 3. Test Elasticsearch Connection
+try:
+   log_message("Testing Elasticsearch connection...")
+   es = Elasticsearch(["http://es:9200"])
+   if es.ping():
+       log_message("Elasticsearch connection successful! Service is responding.")
+       cluster_info = es.info()
+       log_message(f"Elasticsearch version: {cluster_info['version']['number']}")
+       log_message("\n")
+       log_message("=" * 50)
+       log_message("🎉 ALL SYSTEMS GO CAPTAIN! 🎉")
+       log_message("=" * 50)
+       log_message("🍫 TIME FOR A CHOCOLATE WAFER! 🍫")
+       log_message("COME ON TUGBA, GET US SOME CHOCOLATE WAFERS! 🏃‍♀️ 🛍️")
+       log_message("=" * 50)
+   else:
+       log_message("Elasticsearch is not responding!")
+except Exception as e:
+   log_message(f"Elasticsearch connection error: {e}")
+
+log_message("All connection tests completed.")
+# test: add connection timeouts validation block
