@@ -157,3 +157,110 @@ except Exception as e:
 log_message("🔄 Starting data processing pipeline...")
 
 # Parse JSON data
+df2 = kafka_df.selectExpr("CAST(value AS STRING)")
+
+# Define sensor schema
+schema = StructType([
+    StructField("event_ts_min", TimestampType(), True),
+    StructField("ts_min_bignt", LongType(), True),
+    StructField("room", StringType(), True),
+    StructField("co2", FloatType(), True),
+    StructField("light", FloatType(), True),
+    StructField("temp", FloatType(), True),
+    StructField("humidity", FloatType(), True),
+    StructField("pir", FloatType(), True)
+])
+
+# Extract and configure data from JSON
+df3 = df2.select(F.from_json(F.col("value"), schema).alias("data")).select("data.*")
+df4 = df3.withColumn("if_movement", F.when(F.col("pir") > 0.0, "movement").otherwise("no_movement"))
+
+def process_batch(batch_df, batch_id):
+    """Writes each batch to Elasticsearch"""
+    batch_start_time = time.time()
+    retry_count = 3
+    
+    while retry_count > 0:
+        try:
+            log_message(f"\n{'='*50}", "highlight")
+            log_message(f"🔄 Processing Batch {batch_id}...", "info")
+            
+            rows = batch_df.collect()
+            bulk_data = []
+            chunk_size = 500
+            total_rows = len(rows)
+            processed_rows = 0
+
+            for row in rows:
+                try:
+                    # Create Elasticsearch document for each record
+                    doc = {
+                        "event_ts_min": row.event_ts_min,
+                        "co2": float(row.co2) if row.co2 is not None else 0.0,
+                        "humidity": float(row.humidity) if row.humidity is not None else 0.0,
+                        "light": float(row.light) if row.light is not None else 0.0,
+                        "temperature": float(row.temp) if row.temp is not None else 0.0,
+                        "room": row.room,
+                        "pir": float(row.pir) if row.pir is not None else 0.0,
+                        "if_movement": row.if_movement
+                    }
+                    
+                    bulk_data.append({
+                        '_index': 'office_input',
+                        '_source': doc
+                    })
+
+                    processed_rows += 1
+                    # Bulk write when chunk size is reached
+                    if len(bulk_data) >= chunk_size:
+                        success, failed = helpers.bulk(es, bulk_data, stats_only=True)
+                        log_message(f"✅ Chunk written ({processed_rows}/{total_rows})", "success")
+                        bulk_data = []
+
+                except Exception as row_error:
+                    log_message(f"⚠️ Row processing error: {str(row_error)}", "warning")
+                    continue
+
+            # Process remaining data
+            if bulk_data:
+                success, failed = helpers.bulk(es, bulk_data, stats_only=True)
+                log_message(f"✅ Final chunk written (Total: {total_rows})", "success")
+
+            batch_duration = time.time() - batch_start_time
+            print_batch_report(batch_id, total_rows, batch_duration)
+            log_message(f"{'='*50}\n", "highlight")
+            break
+
+        except Exception as e:
+            retry_count -= 1
+            if retry_count == 0:
+                log_message(f"❌ Maximum retry count reached: {str(e)}", "error")
+                raise e
+            log_message(f"⚠️ Retrying batch. Remaining: {retry_count}", "warning")
+            time.sleep(5)
+
+# Start streaming process
+try:
+    query = (df4.writeStream
+             .foreachBatch(process_batch)
+             .option("checkpointLocation", checkpointDir)
+             .trigger(processingTime='5 seconds')
+             .start())
+
+    log_message("""
+    ✨ Stream started successfully!
+    📊 Data flow details:
+    ├── 📥 Source: Kafka (office-input topic)
+    ├── 💾 Target: Elasticsearch (office_input index)
+    ├── ⚡ Trigger: 5 seconds
+    └── 🔄 Checkpoint: /tmp/streaming/kafka_office_input
+    """, "success")
+
+    query.awaitTermination()
+
+except Exception as e:
+    log_message(f"❌ Stream startup error: {str(e)}", "error")
+    sys.exit(1)
+
+log_message("✨ Process completed!", "success")
+# chore: update Elasticsearch index mappings
