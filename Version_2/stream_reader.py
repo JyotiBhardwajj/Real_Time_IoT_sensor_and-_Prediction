@@ -167,3 +167,116 @@ def process_room_data(spark, room_name, directory_path, save_training=False, is_
                    .save()
                
                log_message(f"Room {room_name} data successfully written to Kafka!", "success")
+               break
+               
+           except Exception as e:
+               retry_count -= 1
+               if retry_count == 0:
+                   raise e
+               print_progress(room_name, "warning", f"Retrying... (Remaining: {retry_count})")
+               time.sleep(2)
+
+       for df in dataframes.values():
+           df.unpersist()
+       
+       log_message(f"{'='*50}\n", "highlight")
+       return True
+
+   except Exception as e:
+       log_message(f"Error processing Room {room_name}: {str(e)}", "error")
+       return False
+def main():
+   print_banner()
+   log_message("Initializing system...", "highlight")
+
+   try:
+       spark = (SparkSession.builder
+               .appName("Sensor Data Reader")
+               .master("local[2]")
+               .config("spark.driver.memory", "2g")
+               .config("spark.executor.memory", "2g")
+               .config("spark.sql.shuffle.partitions", "10")
+               .config("spark.default.parallelism", "10")
+               .config("spark.memory.offHeap.enabled", "true")
+               .config("spark.memory.offHeap.size", "1g")
+               .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1")
+               .getOrCreate())
+       
+       spark.sparkContext.setLogLevel("ERROR")
+       log_message("Spark Session created successfully!", "success")
+
+       directory_path = '/opt/final_project/KETI'
+       first_iteration = True
+       iteration = 1
+
+       # Clean old CSV
+       csv_path = "/opt/data-generator/input/sensors.csv"
+       try:
+           if os.path.exists(csv_path):
+               os.remove(csv_path)
+               log_message("Old CSV file cleaned", "info")
+       except Exception as e:
+           log_message(f"CSV cleanup error: {str(e)}", "warning")
+
+       while True:
+           try:
+               log_message(f"\n{'#'*60}", "highlight")
+               if first_iteration:
+                   log_message("🤖 FIRST ITERATION - Creating Training Data...", "ml")
+               log_message(f"Starting iteration {iteration}...", "highlight")
+               log_message(f"{'#'*60}\n", "highlight")
+               
+               sorted_rooms = sorted(os.listdir(directory_path))
+               for idx, room_name in enumerate(sorted_rooms):
+                   if not os.path.isdir(os.path.join(directory_path, room_name)):
+                       continue
+                   
+                   is_first_room = (idx == 0)
+                   success = process_room_data(spark, room_name, directory_path,
+                                            save_training=first_iteration,
+                                            is_first_room=is_first_room)
+                   
+                   if success:
+                       time.sleep(1)
+                   else:
+                       log_message(f"Error processing Room {room_name}, moving to next room...", "warning")
+                       time.sleep(3)
+               
+               if first_iteration:
+                   first_iteration = False
+                   log_message("""
+╔════════════════════════════════════════════════════════════╗
+║                   🎯 IMPORTANT NOTICE                      ║
+║--------------------------------------------------------- ║
+║ ✅ Training data created successfully!                     ║
+║ 📍 Location: /opt/data-generator/input/sensors.csv         ║
+║ 💪 All room data combined                                 ║
+║ ⚡ Model training can now begin!                          ║
+╚════════════════════════════════════════════════════════════╝
+                   """, "ml")
+               
+               log_message(f"\n{'='*60}", "highlight")
+               log_message(f"Iteration {iteration} completed!", "success")
+               log_message("Waiting 30 seconds...", "info")
+               log_message(f"{'='*60}\n", "highlight")
+               
+               iteration += 1
+               time.sleep(30)
+
+           except Exception as e:
+               log_message(f"Error during iteration {iteration}: {str(e)}", "error")
+               log_message("Retrying in 5 seconds...", "warning")
+               time.sleep(5)
+
+   except KeyboardInterrupt:
+       log_message("\nStopped by user.", "warning")
+   except Exception as e:
+       log_message(f"Critical system error: {str(e)}", "error")
+   finally:
+       if 'spark' in locals():
+           spark.stop()
+       log_message("System shut down.", "warning")
+
+if __name__ == "__main__":
+   main()
+# chore: add telemetry logging to stream reader module
