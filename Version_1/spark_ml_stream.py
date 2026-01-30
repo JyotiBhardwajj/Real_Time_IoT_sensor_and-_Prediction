@@ -224,3 +224,5 @@ except Exception as e:
    log_message(f"❌ Stream startup error: {str(e)}", "error")
    sys.exit(1)
 # perf: optimize spark execution plan and checkpointing
+
+# perf: optimize spark execution plan and checkpointing
