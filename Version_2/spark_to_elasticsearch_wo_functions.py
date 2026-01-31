@@ -264,3 +264,5 @@ except Exception as e:
 
 log_message("✨ Process completed!", "success")
 # chore: update Elasticsearch index mappings
+
+# chore: update Elasticsearch index mappings
