@@ -34,4 +34,4 @@ This project enables real-time monitoring of sensor data, environmental analytic
 
 # docs: finalize configuration steps for the sensor network dashboard
 
-# docs: update architectural diagrams and references
+# docs: finalize configuration steps for the sensor network dashboard
