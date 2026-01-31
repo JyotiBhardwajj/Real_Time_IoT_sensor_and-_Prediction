@@ -67,3 +67,5 @@ except Exception as e:
 
 log_message("All connection tests completed.")
 # test: enhance Kafka and Elasticsearch validation routines
+
+# test: enhance Kafka and Elasticsearch validation routines
