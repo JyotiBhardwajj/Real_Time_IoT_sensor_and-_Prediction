@@ -33,3 +33,5 @@ Both versions utilize the following technologies:
 This project enables real-time monitoring of sensor data, environmental analytics, and motion detection.
 
 # docs: finalize configuration steps for the sensor network dashboard
+
+# docs: update architectural diagrams and references
