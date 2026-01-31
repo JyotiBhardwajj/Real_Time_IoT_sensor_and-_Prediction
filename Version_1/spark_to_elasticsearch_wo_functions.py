@@ -256,3 +256,5 @@ except Exception as e:
 
 log_message("✨ Process completed!", "success")
 # chore: add default mapping schemas
+
+# chore: add default mapping schemas
